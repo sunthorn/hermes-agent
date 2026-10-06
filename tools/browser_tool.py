@@ -311,6 +311,17 @@ def _get_cdp_override() -> str:
     if not _axi_browser_allowed():
         return ""
 
+    # axi: each chat drives ITS planner's browser through contact-layer's
+    # proxy. With a proxy configured there is no shared fallback: a chat with
+    # no planner gets no CDP override (the in-container headless browser).
+    from gateway.axi_xplan_gate import cdp_url as _axi_cdp_url
+
+    axi_url = _axi_cdp_url()
+    if axi_url:
+        return _resolve_cdp_override(axi_url)
+    if os.environ.get("XPLAN_CDP_PROXY", "").strip():
+        return ""
+
     env_override = os.environ.get("BROWSER_CDP_URL", "").strip()
     if env_override:
         return _resolve_cdp_override(env_override)

@@ -210,3 +210,74 @@ def test_the_supervisor_never_attaches_to_a_cached_shared_browser_for_an_unliste
     remember_request({"X-Axi-Agent-User": "someone@example.com"})
     bt._ensure_cdp_supervisor("t1")
     assert started == []
+
+
+# --- per-owner CDP proxy URL ---------------------------------------------------
+
+import hashlib
+import hmac
+from concurrent.futures import ThreadPoolExecutor
+
+from gateway.axi_xplan_gate import cdp_url
+from tools.thread_context import propagate_context_to_thread
+
+
+@pytest.fixture
+def proxied(monkeypatch):
+    monkeypatch.delenv("XPLAN_ALLOWED_USERS", raising=False)
+    monkeypatch.setenv("XPLAN_CDP_PROXY", "http://contact-layer:8200/cdp")
+    monkeypatch.setenv("XPLAN_CDP_SECRET", "s3cret")
+
+
+def _sig(owner):
+    return hmac.new(b"s3cret", owner.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def test_cdp_url_names_the_chatting_owner(proxied):
+    remember_request({"X-Axi-Agent-Owner": "owner-1"})
+    assert cdp_url() == f"http://contact-layer:8200/cdp/owner-1/{_sig('owner-1')}"
+
+
+def test_no_owner_no_url(proxied):
+    remember_request({})
+    assert cdp_url() == ""
+
+
+def test_malformed_owner_no_url(proxied):
+    remember_request({"X-Axi-Agent-Owner": "../owner-1"})
+    assert cdp_url() == ""
+
+
+def test_no_proxy_configured_no_url(monkeypatch):
+    monkeypatch.delenv("XPLAN_CDP_PROXY", raising=False)
+    remember_request({"X-Axi-Agent-Owner": "owner-1"})
+    assert cdp_url() == ""
+
+
+def test_not_allowed_no_url(proxied, monkeypatch):
+    monkeypatch.setenv("XPLAN_ALLOWED_USERS", "owner@example.com")
+    remember_request({"X-Axi-Agent-Owner": "owner-1", "X-Axi-Agent-User": "else@example.com"})
+    assert cdp_url() == ""
+
+
+def test_owner_reaches_tool_worker_threads(proxied):
+    remember_request({"X-Axi-Agent-Owner": "owner-1"})
+    with ThreadPoolExecutor(1) as pool:
+        got = pool.submit(propagate_context_to_thread(cdp_url)).result()
+    assert "/owner-1/" in got
+
+
+def test_browser_tool_uses_the_chat_owners_url(proxied, monkeypatch):
+    from tools import browser_tool
+    monkeypatch.setenv("BROWSER_CDP_URL", "http://192.168.65.254:9222")
+    monkeypatch.setattr(browser_tool, "_resolve_cdp_override", lambda url: f"resolved:{url}")
+    remember_request({"X-Axi-Agent-Owner": "owner-1"})
+    assert browser_tool._get_cdp_override() == (
+        f"resolved:http://contact-layer:8200/cdp/owner-1/{_sig('owner-1')}")
+
+
+def test_proxy_mode_never_falls_back_to_a_shared_browser(proxied, monkeypatch):
+    from tools import browser_tool
+    monkeypatch.setenv("BROWSER_CDP_URL", "http://192.168.65.254:9222")
+    remember_request({})
+    assert browser_tool._get_cdp_override() == ""
