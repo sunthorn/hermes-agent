@@ -71,9 +71,11 @@ def session_scope() -> str:
 
     hermes derives a chat's session id from its opening message; two planners
     who open with the same words would otherwise share a session, and with it
-    a cached browser. Empty when the request names nobody.
+    a cached browser. Email and owner id both count (a request may carry only
+    one). Empty when the request names nobody.
     """
-    return _identity.get()[0]
+    user, _, owner = _identity.get()
+    return "|".join(p for p in (user, owner) if p)
 
 
 def cdp_url() -> str:

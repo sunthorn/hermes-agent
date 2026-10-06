@@ -269,31 +269,51 @@ def _resolve_cdp_override(cdp_url: str) -> str:
         response.raise_for_status()
         payload = response.json()
     except Exception as exc:
-        logger.warning("Failed to resolve CDP endpoint %s via %s: %s", raw, version_url, exc)
+        logger.warning("Failed to resolve CDP endpoint %s via %s: %s",
+                       _redact_cdp(raw), _redact_cdp(version_url), _redact_cdp(exc))
         return raw
 
     ws_url = str(payload.get("webSocketDebuggerUrl") or "").strip()
     if ws_url:
-        logger.info("Resolved CDP endpoint %s -> %s", raw, ws_url)
+        logger.info("Resolved CDP endpoint %s -> %s", _redact_cdp(raw), _redact_cdp(ws_url))
         return ws_url
 
-    logger.warning("CDP discovery at %s did not return webSocketDebuggerUrl; using raw endpoint", version_url)
+    logger.warning("CDP discovery at %s did not return webSocketDebuggerUrl; using raw endpoint", _redact_cdp(version_url))
     return raw
+
+
+def _redact_cdp(url: str) -> str:
+    """axi: hide the signature in a proxy path ``/cdp/<owner>/<sig>`` for logs."""
+    import re
+
+    return re.sub(r"(/cdp/[^/]+/)[^/?#]+", r"\1***", str(url))
 
 
 def _axi_denies_cached(session_info) -> bool:
     """axi: a cached session holding a CDP address (the shared XPLAN browser)
     must not be reused by a user XPLAN_ALLOWED_USERS does not name. See
     _get_cdp_override and gateway/axi_xplan_gate.py."""
-    from gateway.axi_xplan_gate import browser_allowed as _axi_browser_allowed
+    from gateway.axi_xplan_gate import _identity, browser_allowed as _axi_browser_allowed
 
-    return bool(session_info and session_info.get("cdp_url")) and not _axi_browser_allowed()
+    cached = str((session_info or {}).get("cdp_url") or "")
+    if not cached:
+        return False
+    if not _axi_browser_allowed():
+        return True
+    if os.environ.get("XPLAN_CDP_PROXY", "").strip():
+        # proxy mode: only the session pointing at THIS chat's own planner
+        owner = _identity.get()[2]
+        return not owner or f"/cdp/{owner}/" not in cached
+    return False
 
 
 def _get_cdp_override() -> str:
     """Return a normalized CDP URL override, or empty string.
 
     Precedence is:
+    0. axi: the allow-list deny check, then the per-planner proxy URL
+       (``XPLAN_CDP_PROXY``); both come before env and config, and in proxy
+       mode there is no fallback to the settings below.
     1. ``BROWSER_CDP_URL`` env var (live override from ``/browser connect``)
     2. ``browser.cdp_url`` in config.yaml (persistent config)
 

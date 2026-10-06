@@ -281,3 +281,95 @@ def test_proxy_mode_never_falls_back_to_a_shared_browser(proxied, monkeypatch):
     monkeypatch.setenv("BROWSER_CDP_URL", "http://192.168.65.254:9222")
     remember_request({})
     assert browser_tool._get_cdp_override() == ""
+
+
+# --- review fixes: sessions belong to their planner, signatures stay out of logs --
+
+
+A_URL = "ws://contact-layer:8200/cdp/owner-A/abc123/devtools/browser/x"
+
+
+def test_session_scope_combines_email_and_owner(monkeypatch):
+    from gateway.axi_xplan_gate import session_scope
+    remember_request({})
+    assert session_scope() == ""
+    remember_request({"X-Axi-Agent-User": "A@x.com", "X-Axi-Agent-Owner": "o1"})
+    assert session_scope() == "a@x.com|o1"
+    remember_request({"X-Axi-Agent-Owner": "o1"})
+    assert session_scope() == "o1"
+
+
+def test_same_emailless_opening_different_owners_different_sessions():
+    from gateway.platforms import api_server
+    from gateway.axi_xplan_gate import session_scope
+    remember_request({"X-Axi-Agent-Owner": "owner-A"})
+    a = api_server._derive_chat_session_id("sys", "hi", session_scope())
+    remember_request({"X-Axi-Agent-Owner": "owner-B"})
+    b = api_server._derive_chat_session_id("sys", "hi", session_scope())
+    assert a != b
+
+
+def test_another_planners_cached_session_is_not_reused(proxied, no_real_browser):
+    bt = no_real_browser
+    bt._active_sessions["t1"] = {"session_name": "cdp-t1", "cdp_url": A_URL}
+    remember_request({"X-Axi-Agent-Owner": "owner-B"})
+    assert bt._get_session_info("t1").get("cdp_url") != A_URL
+
+
+def test_own_cached_session_is_kept(proxied, no_real_browser):
+    bt = no_real_browser
+    cached = {"session_name": "cdp-t1", "cdp_url": A_URL}
+    bt._active_sessions["t1"] = cached
+    remember_request({"X-Axi-Agent-Owner": "owner-A"})
+    assert bt._get_session_info("t1") is cached
+
+
+def test_proxy_mode_without_owner_denies_any_cached_cdp_session(proxied, no_real_browser):
+    bt = no_real_browser
+    bt._active_sessions["t1"] = {"session_name": "cdp-t1", "cdp_url": A_URL}
+    remember_request({})
+    assert bt._get_session_info("t1").get("cdp_url") != A_URL
+
+
+def test_supervisor_does_not_attach_to_another_planners_session(proxied, no_real_browser, monkeypatch):
+    bt = no_real_browser
+    from tools import browser_supervisor
+    started = []
+    monkeypatch.setattr(browser_supervisor.SUPERVISOR_REGISTRY, "get_or_start",
+                        lambda **kw: started.append(kw))
+    monkeypatch.delenv("BROWSER_CDP_URL", raising=False)
+    monkeypatch.setattr(bt, "_resolve_cdp_override", lambda url: url)
+    bt._active_sessions["t1"] = {"session_name": "cdp-t1", "cdp_url": A_URL}
+    remember_request({"X-Axi-Agent-Owner": "owner-B"})
+    bt._ensure_cdp_supervisor("t1")
+    assert all(kw["cdp_url"] != A_URL for kw in started)
+
+
+def test_no_secret_no_url(monkeypatch):
+    monkeypatch.delenv("XPLAN_ALLOWED_USERS", raising=False)
+    monkeypatch.setenv("XPLAN_CDP_PROXY", "http://contact-layer:8200/cdp")
+    monkeypatch.delenv("XPLAN_CDP_SECRET", raising=False)
+    remember_request({"X-Axi-Agent-Owner": "owner-1"})
+    assert cdp_url() == ""
+
+
+def test_redact_cdp_hides_the_signature():
+    from tools.browser_tool import _redact_cdp
+    out = _redact_cdp("ws://h:8200/cdp/owner-A/abcdef0123/devtools/browser/x")
+    assert out == "ws://h:8200/cdp/owner-A/***/devtools/browser/x"
+    assert _redact_cdp("http://h:9222/json/version") == "http://h:9222/json/version"
+    assert _redact_cdp("http://h:8200/cdp/owner-A/abcdef0123") == "http://h:8200/cdp/owner-A/***"
+
+
+def test_resolve_logs_never_carry_the_signature(monkeypatch, caplog):
+    import logging
+    from tools import browser_tool
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"webSocketDebuggerUrl": "ws://h:8200/cdp/owner-A/SECRETSIG/devtools/browser/x"}
+
+    monkeypatch.setattr(browser_tool.requests, "get", lambda *a, **k: R())
+    with caplog.at_level(logging.INFO, logger=browser_tool.logger.name):
+        browser_tool._resolve_cdp_override("http://h:8200/cdp/owner-A/SECRETSIG")
+    assert "SECRETSIG" not in caplog.text
