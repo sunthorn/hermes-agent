@@ -39,3 +39,19 @@ detailing:
 
 The frontend (`open-webui`) reads `handoff.md` before integrating; treat it as
 a deliverable, not documentation overhead.
+
+## axi XPLAN gate
+Context, not new rules. Contracts: `../shared-contracts/xplan-provider-spec.md`
+(`XPLAN_ALLOWED_USERS`), `../shared-contracts/xplan-browser-spec.md` (§5–6).
+- `gateway/axi_xplan_gate.py` decides who keeps the `browser` toolset and
+  which browser a chat drives; `tools/browser_tool.py` applies it.
+- Headers (trusted only because callers hold `API_SERVER_KEY`):
+  `X-Axi-Agent-User` (email), `X-Axi-Agent-Owner` (OWUI user id),
+  `X-Axi-Agent-Caller` (`contact-layer` for its own jobs). Naming nobody
+  means no browser.
+- `XPLAN_ALLOWED_USERS`: comma-separated emails; unset = unrestricted.
+- Proxy mode: with `XPLAN_CDP_PROXY` + `XPLAN_CDP_SECRET` each chat gets
+  `<proxy>/<owner>/<sig>`; there is no fallback to a shared
+  `BROWSER_CDP_URL`. Cached browser sessions are bound to their owner, and
+  chat session ids are scoped by the user.
+- Tests: `scripts/run_tests.sh tests/gateway/test_axi_xplan_gate.py`.
