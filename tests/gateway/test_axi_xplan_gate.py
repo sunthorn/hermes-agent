@@ -127,3 +127,26 @@ async def test_streamed_chat_from_an_unlisted_user_runs_without_the_browser(rest
         )
         await resp.read()
     assert "browser" not in captured_toolsets["toolsets"]
+
+
+# --- enforced where the browser is reached, not only in the toolset list ------
+
+
+def test_an_unlisted_user_never_gets_the_shared_browser_address(restricted, monkeypatch):
+    # Composite toolsets (coding, hermes-api-server, hermes-acp) carry the
+    # browser tools too, so dropping the `browser` toolset alone is not enough.
+    # The CDP address itself must be withheld: without it the tools fall back
+    # to the in-container headless browser, which has no XPLAN session.
+    from tools import browser_tool
+    monkeypatch.setenv("BROWSER_CDP_URL", "http://192.168.65.254:9222")
+    monkeypatch.setattr(browser_tool, "_resolve_cdp_override", lambda url: url)
+    remember_request({"X-Axi-Agent-User": "someone@example.com"})
+    assert browser_tool._get_cdp_override() == ""
+
+
+def test_a_listed_user_still_gets_it(restricted, monkeypatch):
+    from tools import browser_tool
+    monkeypatch.setenv("BROWSER_CDP_URL", "http://192.168.65.254:9222")
+    monkeypatch.setattr(browser_tool, "_resolve_cdp_override", lambda url: url)
+    remember_request({"X-Axi-Agent-User": "owner@example.com"})
+    assert browser_tool._get_cdp_override() == "http://192.168.65.254:9222"

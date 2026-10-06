@@ -292,6 +292,16 @@ def _get_cdp_override() -> str:
     launcher and connect directly to the supplied Chrome DevTools Protocol
     endpoint.
     """
+    # axi: withhold the shared browser from anyone XPLAN_ALLOWED_USERS does not
+    # name. Checked here, where the address is read, because composite toolsets
+    # (coding, hermes-api-server) also carry the browser tools; without an
+    # address they fall back to the in-container headless browser, which has
+    # no XPLAN session. See gateway/axi_xplan_gate.py.
+    from gateway.axi_xplan_gate import browser_allowed as _axi_browser_allowed
+
+    if not _axi_browser_allowed():
+        return ""
+
     env_override = os.environ.get("BROWSER_CDP_URL", "").strip()
     if env_override:
         return _resolve_cdp_override(env_override)

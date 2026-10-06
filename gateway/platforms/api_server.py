@@ -32,6 +32,7 @@ Requires:
 """
 
 import asyncio
+import contextvars
 import hashlib
 import hmac
 import json
@@ -52,6 +53,7 @@ except ImportError:
     AIOHTTP_AVAILABLE = False
     web = None  # type: ignore[assignment]
 
+from gateway.axi_xplan_gate import filter_toolsets, remember_request
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
     BasePlatformAdapter,
@@ -896,6 +898,9 @@ class APIServerAdapter(BasePlatformAdapter):
         connect() refuses to start the API server without API_SERVER_KEY, so
         the no-key branch only exists for tests or unsupported manual wiring.
         """
+        # axi: note who is asking, so the agent this request builds can drop
+        # the browser toolset under XPLAN_ALLOWED_USERS (gateway/axi_xplan_gate).
+        remember_request(request.headers)
         if not self._api_key:
             return None
 
@@ -1035,7 +1040,7 @@ class APIServerAdapter(BasePlatformAdapter):
         model = _resolve_gateway_model()
 
         user_config = _load_gateway_config()
-        enabled_toolsets = sorted(_get_platform_tools(user_config, "api_server"))
+        enabled_toolsets = filter_toolsets(sorted(_get_platform_tools(user_config, "api_server")))
 
         max_iterations = int(os.getenv("HERMES_MAX_ITERATIONS", "90"))
 
@@ -3551,7 +3556,9 @@ class APIServerAdapter(BasePlatformAdapter):
             finally:
                 clear_session_vars(tokens)
 
-        return await loop.run_in_executor(None, _run)
+        # Copy the request's context into the worker thread: run_in_executor
+        # does not, and _create_agent reads the caller recorded by _check_auth.
+        return await loop.run_in_executor(None, contextvars.copy_context().run, _run)
 
     # ------------------------------------------------------------------
     # /v1/runs — structured event streaming
