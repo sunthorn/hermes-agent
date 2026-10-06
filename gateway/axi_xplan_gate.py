@@ -57,3 +57,13 @@ def filter_toolsets(toolsets: Iterable[str]) -> List[str]:
     if browser_allowed():
         return toolsets
     return [t for t in toolsets if t != BROWSER_TOOLSET]
+
+
+def session_scope() -> str:
+    """Who this chat belongs to, for keying per-chat state.
+
+    hermes derives a chat's session id from its opening message; two planners
+    who open with the same words would otherwise share a session, and with it
+    a cached browser. Empty when the request names nobody.
+    """
+    return _identity.get()[0]

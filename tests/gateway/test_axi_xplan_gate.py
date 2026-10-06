@@ -150,3 +150,63 @@ def test_a_listed_user_still_gets_it(restricted, monkeypatch):
     monkeypatch.setattr(browser_tool, "_resolve_cdp_override", lambda url: url)
     remember_request({"X-Axi-Agent-User": "owner@example.com"})
     assert browser_tool._get_cdp_override() == "http://192.168.65.254:9222"
+
+
+# --- a cached browser session is not a way around the gate --------------------
+
+
+def test_two_users_with_the_same_opening_message_get_different_sessions(restricted, monkeypatch):
+    # hermes derives a chat's session id from its first message. Without the
+    # user in the seed, two planners who both open with "hi" share a session —
+    # and its cached browser.
+    from gateway.platforms import api_server
+    from gateway.axi_xplan_gate import session_scope
+
+    remember_request({"X-Axi-Agent-User": "owner@example.com"})
+    mine = api_server._derive_chat_session_id("sys", "hi", session_scope())
+    remember_request({"X-Axi-Agent-User": "someone@example.com"})
+    theirs = api_server._derive_chat_session_id("sys", "hi", session_scope())
+    assert mine != theirs
+    # no axi identity: unchanged from upstream
+    assert api_server._derive_chat_session_id("sys", "hi") == api_server._derive_chat_session_id("sys", "hi", "")
+
+
+@pytest.fixture
+def no_real_browser(monkeypatch):
+    from tools import browser_tool
+    monkeypatch.setattr(browser_tool, "_start_browser_cleanup_thread", lambda: None)
+    monkeypatch.setattr(browser_tool, "_update_session_activity", lambda task_id: None)
+    monkeypatch.setattr(browser_tool, "_create_local_session",
+                        lambda task_id: {"session_name": f"local-{task_id}", "cdp_url": None})
+    monkeypatch.setattr(browser_tool, "_active_sessions", {})
+    return browser_tool
+
+
+def test_an_unlisted_user_does_not_inherit_a_cached_shared_browser_session(restricted, no_real_browser):
+    bt = no_real_browser
+    bt._active_sessions["t1"] = {"session_name": "cdp-t1", "cdp_url": "ws://192.168.65.254:9222/devtools/browser/x"}
+    remember_request({"X-Axi-Agent-User": "someone@example.com"})
+    info = bt._get_session_info("t1")
+    assert not info.get("cdp_url")
+
+
+def test_a_listed_user_keeps_their_cached_session(restricted, no_real_browser):
+    bt = no_real_browser
+    cached = {"session_name": "cdp-t1", "cdp_url": "ws://192.168.65.254:9222/devtools/browser/x"}
+    bt._active_sessions["t1"] = cached
+    remember_request({"X-Axi-Agent-User": "owner@example.com"})
+    assert bt._get_session_info("t1") is cached
+
+
+def test_the_supervisor_never_attaches_to_a_cached_shared_browser_for_an_unlisted_user(
+        restricted, no_real_browser, monkeypatch):
+    bt = no_real_browser
+    from tools import browser_supervisor
+    started = []
+    monkeypatch.setattr(browser_supervisor.SUPERVISOR_REGISTRY, "get_or_start",
+                        lambda **kw: started.append(kw))
+    monkeypatch.delenv("BROWSER_CDP_URL", raising=False)
+    bt._active_sessions["t1"] = {"session_name": "cdp-t1", "cdp_url": "ws://192.168.65.254:9222/devtools/browser/x"}
+    remember_request({"X-Axi-Agent-User": "someone@example.com"})
+    bt._ensure_cdp_supervisor("t1")
+    assert started == []

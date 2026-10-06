@@ -53,7 +53,7 @@ except ImportError:
     AIOHTTP_AVAILABLE = False
     web = None  # type: ignore[assignment]
 
-from gateway.axi_xplan_gate import filter_toolsets, remember_request
+from gateway.axi_xplan_gate import filter_toolsets, remember_request, session_scope
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
     BasePlatformAdapter,
@@ -675,6 +675,7 @@ def _make_request_fingerprint(body: Dict[str, Any], keys: List[str]) -> str:
 def _derive_chat_session_id(
     system_prompt: Optional[str],
     first_user_message: str,
+    scope: str = "",
 ) -> str:
     """Derive a stable session ID from the conversation's first user message.
 
@@ -686,6 +687,10 @@ def _derive_chat_session_id(
     directory) across turns.
     """
     seed = f"{system_prompt or ''}\n{first_user_message}"
+    if scope:
+        # axi: the chatting user (gateway/axi_xplan_gate.session_scope), so two
+        # users' identical opening messages never share a session.
+        seed += f"\n{scope}"
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
     return f"api-{digest}"
 
@@ -1836,7 +1841,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 if cm.get("role") == "user":
                     first_user = cm.get("content", "")
                     break
-            session_id = _derive_chat_session_id(system_prompt, first_user)
+            session_id = _derive_chat_session_id(system_prompt, first_user, session_scope())
             # history already set from request body above
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"

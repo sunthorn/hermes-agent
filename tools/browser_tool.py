@@ -281,6 +281,15 @@ def _resolve_cdp_override(cdp_url: str) -> str:
     return raw
 
 
+def _axi_denies_cached(session_info) -> bool:
+    """axi: a cached session holding a CDP address (the shared XPLAN browser)
+    must not be reused by a user XPLAN_ALLOWED_USERS does not name. See
+    _get_cdp_override and gateway/axi_xplan_gate.py."""
+    from gateway.axi_xplan_gate import browser_allowed as _axi_browser_allowed
+
+    return bool(session_info and session_info.get("cdp_url")) and not _axi_browser_allowed()
+
+
 def _get_cdp_override() -> str:
     """Return a normalized CDP URL override, or empty string.
 
@@ -381,7 +390,7 @@ def _ensure_cdp_supervisor(task_id: str) -> None:
         with _cleanup_lock:
             session_info = _active_sessions.get(task_id, {})
         maybe = str(session_info.get("cdp_url") or "")
-        if maybe:
+        if maybe and not _axi_denies_cached(session_info):
             cdp_url = _resolve_cdp_override(maybe)
     if not cdp_url:
         return
@@ -1689,8 +1698,13 @@ def _get_session_info(task_id: Optional[str] = None) -> Dict[str, str]:
 
     with _cleanup_lock:
         # Check if we already have a session for this task
-        if task_id in _active_sessions:
-            return _active_sessions[task_id]
+        cached = _active_sessions.get(task_id)
+    if cached is not None:
+        if not _axi_denies_cached(cached):
+            return cached
+        # axi: someone else's shared-browser session under this key. Use a
+        # separate local Chromium (the ::local sidecar) instead.
+        return _get_session_info(f"{task_id}::local")
 
     # Hybrid routing: session keys ending with ``::local`` force a local
     # Chromium regardless of the globally-configured cloud provider.  Public
@@ -1745,7 +1759,7 @@ def _get_session_info(task_id: Optional[str] = None) -> Dict[str, str]:
         # Double-check: another thread may have created a session while we
         # were doing the network call. Use the existing one to avoid leaking
         # orphan cloud sessions.
-        if task_id in _active_sessions:
+        if task_id in _active_sessions and not _axi_denies_cached(_active_sessions[task_id]):
             return _active_sessions[task_id]
         _active_sessions[task_id] = session_info
 
