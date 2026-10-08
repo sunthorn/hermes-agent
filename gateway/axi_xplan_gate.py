@@ -27,6 +27,7 @@ from typing import Iterable, List, Mapping
 USER_HEADER = "X-Axi-Agent-User"
 CALLER_HEADER = "X-Axi-Agent-Caller"
 OWNER_HEADER = "X-Axi-Agent-Owner"
+CLIENT_HEADER = "X-Axi-Client"
 _OWNER_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 TRUSTED_CALLER = "contact-layer"
 BROWSER_TOOLSET = "browser"
@@ -36,6 +37,11 @@ BROWSER_TOOLSET = "browser"
 # executor thread that builds the agent.
 _identity: ContextVar[tuple] = ContextVar("axi_xplan_identity", default=("", "", ""))
 
+# The XPLAN client the planner is working on, from the shell's X-Axi-Client
+# on chat completions (spec 2026-10-08 §3.6). Separate from _identity so the
+# tuple browser_tool.py reads keeps its shape. Empty when no client is active.
+_client: ContextVar[str] = ContextVar("axi_client_scope", default="")
+
 
 def remember_request(headers: Mapping[str, str]) -> None:
     """Record who is asking, for the agent this request builds."""
@@ -44,6 +50,12 @@ def remember_request(headers: Mapping[str, str]) -> None:
         (headers.get(CALLER_HEADER) or "").strip(),
         (headers.get(OWNER_HEADER) or "").strip(),
     ))
+    _client.set((headers.get(CLIENT_HEADER) or "").strip())
+
+
+def client_scope() -> str:
+    """The active XPLAN client id for this request, or ''."""
+    return _client.get()
 
 
 def _allowed_users() -> frozenset:

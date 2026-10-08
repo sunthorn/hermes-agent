@@ -2726,6 +2726,21 @@ async def _connect_server(name: str, config: dict) -> MCPServerTask:
 # Handler / check-fn factories
 # ---------------------------------------------------------------------------
 
+def _default_client_arg(server_name: str, args: dict) -> dict:
+    """axi: the active client (shell → X-Axi-Client → gateway/axi_xplan_gate)
+    is the default `client_id` for the axi MCP server's tools. The MCP
+    session is shared by every chat, so this travels as an argument, not a
+    header. An explicit client_id always wins."""
+    if server_name != "axi" or "client_id" in args:
+        return args
+    try:
+        from gateway.axi_xplan_gate import client_scope
+    except Exception:
+        return args
+    cid = client_scope()
+    return {**args, "client_id": cid} if cid else args
+
+
 def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
     """Return a sync handler that calls an MCP tool via the background loop.
 
@@ -2734,6 +2749,7 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
     """
 
     def _handler(args: dict, **kwargs) -> str:
+        args = _default_client_arg(server_name, args or {})
         # Circuit breaker: if this server has failed too many times
         # consecutively, short-circuit with a clear message so the model
         # stops retrying and uses alternative approaches (#10447).

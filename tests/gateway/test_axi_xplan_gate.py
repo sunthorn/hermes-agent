@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from gateway.axi_xplan_gate import browser_allowed, filter_toolsets, remember_request
+from gateway.axi_xplan_gate import browser_allowed, client_scope, filter_toolsets, remember_request
 from tests.gateway.test_api_server import _create_app, _make_adapter
 
 TOOLSETS = ["axi", "browser", "web", "memory"]
@@ -373,3 +373,26 @@ def test_resolve_logs_never_carry_the_signature(monkeypatch, caplog):
     with caplog.at_level(logging.INFO, logger=browser_tool.logger.name):
         browser_tool._resolve_cdp_override("http://h:8200/cdp/owner-A/SECRETSIG")
     assert "SECRETSIG" not in caplog.text
+
+
+# --- the active client, for search_knowledge --------------------------------
+
+
+def test_client_header_is_remembered_and_trimmed():
+    remember_request({"X-Axi-Agent-User": "owner@example.com", "X-Axi-Client": " 899317 "})
+    assert client_scope() == "899317"
+
+
+def test_no_client_header_means_no_scope():
+    remember_request({"X-Axi-Agent-User": "owner@example.com"})
+    assert client_scope() == ""
+
+
+def test_axi_tool_calls_get_the_client_as_a_default_argument():
+    from tools.mcp_tool import _default_client_arg
+    remember_request({"X-Axi-Client": "899317"})
+    assert _default_client_arg("axi", {"query": "goals"}) == {"query": "goals", "client_id": "899317"}
+    assert _default_client_arg("axi", {"query": "g", "client_id": "1"}) == {"query": "g", "client_id": "1"}
+    assert _default_client_arg("other", {"query": "goals"}) == {"query": "goals"}
+    remember_request({})
+    assert _default_client_arg("axi", {"query": "goals"}) == {"query": "goals"}
