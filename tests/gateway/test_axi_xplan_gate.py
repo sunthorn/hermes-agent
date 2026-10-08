@@ -396,3 +396,16 @@ def test_axi_tool_calls_get_the_client_as_a_default_argument():
     assert _default_client_arg("other", {"query": "goals"}) == {"query": "goals"}
     remember_request({})
     assert _default_client_arg("axi", {"query": "goals"}) == {"query": "goals"}
+
+
+@pytest.mark.parametrize("bad", ["../x", "1?a=b", "a/b", "x" * 65, "8993 17"])
+def test_a_malformed_client_header_is_dropped(bad):
+    # client_scope() becomes get_client_detail's client_id, which lands in a
+    # service-token URL path — only an id-shaped value may get that far.
+    remember_request({"X-Axi-Client": bad})
+    assert client_scope() == ""
+
+
+def test_a_well_formed_client_header_at_the_length_limit_is_kept():
+    remember_request({"X-Axi-Client": "a:b_c-" + "9" * 58})
+    assert client_scope() == "a:b_c-" + "9" * 58

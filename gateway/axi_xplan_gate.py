@@ -29,6 +29,10 @@ CALLER_HEADER = "X-Axi-Agent-Caller"
 OWNER_HEADER = "X-Axi-Agent-Owner"
 CLIENT_HEADER = "X-Axi-Client"
 _OWNER_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+# An XPLAN client id, same shape salem accepts. client_scope() becomes
+# get_client_detail's client_id, which axi-mcp puts in a service-token URL
+# path, so anything else (../, ?, /, spaces) is dropped, not passed on.
+_CLIENT_RE = re.compile(r"[A-Za-z0-9:_-]{1,64}")
 TRUSTED_CALLER = "contact-layer"
 BROWSER_TOOLSET = "browser"
 
@@ -50,7 +54,8 @@ def remember_request(headers: Mapping[str, str]) -> None:
         (headers.get(CALLER_HEADER) or "").strip(),
         (headers.get(OWNER_HEADER) or "").strip(),
     ))
-    _client.set((headers.get(CLIENT_HEADER) or "").strip())
+    client = (headers.get(CLIENT_HEADER) or "").strip()
+    _client.set(client if _CLIENT_RE.fullmatch(client) else "")
 
 
 def client_scope() -> str:
